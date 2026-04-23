@@ -2,11 +2,11 @@
 #include <WiFiUdp.h>
 
 // --- Network Configuration ---
-const char* ssid = "Pixel 8 Pro"; // TODO: Edit
-const char* password = "usuck122"; // TODO: Edit
+const char* ssid = ""; // TODO: Edit
+const char* password = ""// TODO: Edit
 
 // Raspberry Pi Static IP
-const char* server_ip = "10.186.208.5"; // TODO: Edit
+IPAddress server_ip(0, 0, 0, 0);
 const int server_port = 8080;
 
 WiFiUDP udp;
@@ -27,7 +27,7 @@ void setup() {
   }
   Serial.println("\nConnected to Wi-Fi!");
 
-  // Fetch the ESP32's MAC address and store it in the array
+  // Fetch the ESP32's MAC address and store it in an array
   WiFi.macAddress(mac_addr);
   Serial.printf("My MAC Address: %02x:%02x:%02x:%02x:%02x:%02x\n", 
                 mac_addr[0], mac_addr[1], mac_addr[2], 
@@ -41,7 +41,7 @@ void loop() {
   if (unit_id == 0x00) {
     // STATE: Handshaking
     request_handshake();
-    liandshake_ack();
+    listen_for_handshake_ack();
     delay(1000); // Wait 1 second before retrying if no ACK is received
   } else {
     // STATE: Normal Operation
@@ -69,23 +69,22 @@ void request_handshake() {
 }
 
 void listen_for_handshake_ack() {
-  // Briefly wait to see if a response comes in
-  delay(100); 
+  unsigned long start_time = millis();
   
-  int packetSize = udp.parsePacket();
-  if (packetSize) {
-    uint8_t incomingBuffer[2]; // Expecting a 2-byte ACK
-    int len = udp.read(incomingBuffer, 2);
-    
-    if (len == 2) {
-      uint8_t msg_type = incomingBuffer[0];
-      uint8_t assigned_id = incomingBuffer[1];
+  // Poll for up to 500ms
+  while (millis() - start_time < 500) {
+    int packetSize = udp.parsePacket();
+    if (packetSize >= 2) {
+      uint8_t incomingBuffer[2];
+      udp.read(incomingBuffer, 2);
       
-      if (msg_type == 0x00 && assigned_id != 0x00) {
-        unit_id = assigned_id;
+      if (incomingBuffer[0] == 0x00 && incomingBuffer[1] != 0x00) {
+        unit_id = incomingBuffer[1];
         Serial.printf("Handshake successful! Assigned Unit ID: %d\n", unit_id);
+        return;
       }
     }
+    delay(10);
   }
 }
 
@@ -95,7 +94,10 @@ void send_sensor_data() {
   uint16_t in_temp = 600;   // Raw sensor reading (10 bits)
   uint16_t humidity = 400;  // Raw sensor reading (10 bits)
 
-  uint32_t payload = (actuator << 30) | (out_temp << 20) | (in_temp << 10) | humidity;
+  uint32_t payload = ((uint32_t)actuator << 30) | 
+                     ((uint32_t)out_temp << 20) | 
+                     ((uint32_t)in_temp << 10)  | 
+                     (uint32_t)humidity;
 
   uint8_t packet[6];
   packet[0] = 0x01; // Message Type: Window Data
