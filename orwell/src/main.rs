@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // --- Data Structures ---
 
@@ -73,6 +74,8 @@ impl DeviceRegistry {
 // --- Main Server Loop ---
 
 fn main() -> std::io::Result<()> {
+    let server_start_time = SystemTime::now();
+    let mut flip: u8 = 0;
     // TODO: Make this keep looking until there's a good socket or smth.
     let socket = UdpSocket::bind("0.0.0.0:8080")?;
 
@@ -132,9 +135,13 @@ fn main() -> std::io::Result<()> {
                     0x01 => { 
                         let data = WindowData::decode(payload);
                         println!("Unit {} (Window) via {}: {:?}", unit_id, src, data);
-                        
+
+                        if SystemTime::now().duration_since(server_start_time).unwrap().as_secs() % 40 == 0 {
+                            if flip == 0 {flip = 1}
+                            else {flip = 0}
+                        }
                         // Example command
-                        let command: [u8; 2] = [0x01, 0x03];
+                        let command: [u8; 2] = [0x01, flip];
                         socket.send_to(&command, src)?;
                     }
                     // Attic Data

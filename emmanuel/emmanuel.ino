@@ -1,9 +1,10 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <dht_async.h>
 
 // --- Network Configuration ---
 const char* ssid = ""; // TODO: Edit
-const char* password = ""// TODO: Edit
+const char* password = ""//TODO: Edit
 
 // Raspberry Pi Static IP
 IPAddress server_ip(0, 0, 0, 0);
@@ -14,6 +15,32 @@ WiFiUDP udp;
 // --- State Variables ---
 uint8_t unit_id = 0x00; // 0x00 means unassigned
 uint8_t mac_addr[6];    // Array to hold the 6-byte MAC address
+
+// -- Sensors -- 
+
+const int buttonPin = 25;
+
+const int indoorTempPin = 32;
+const int outdoorTempPin = 33;
+const int windowDir1Pin = 26;
+const int windowDir2Pin = 27;
+
+#define DHT_SENSOR_TYPE DHT_TYPE_11
+DHT_Async Indoor_Temp(indoorTempPin, DHT_SENSOR_TYPE);
+DHT_Async Outdoor_Temp(outdoorTempPin, DHT_SENSOR_TYPE);
+
+float indoorTempature = 0;
+float outdoorTempature = 0;
+float indoorHumidity = 0;
+float outdoorHumidity = 0;
+
+bool windowState = 0;
+bool windowMoving = 0;
+bool currState = 0;
+bool prevState = 0;
+
+unsigned long int tempTimer = 0;
+unsigned long int openingTime = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -35,6 +62,15 @@ void setup() {
 
   // Start the UDP client
   udp.begin(server_port); 
+
+  // Initialize Sensors
+  pinMode(buttonPin, INPUT_PULLUP);
+
+  pinMode(windowDir1Pin, OUTPUT);
+  pinMode(windowDir2Pin, OUTPUT);
+
+  digitalWrite(windowDir1Pin, LOW);
+  digitalWrite(windowDir2Pin, LOW);
 }
 
 void loop() {
@@ -89,10 +125,15 @@ void listen_for_handshake_ack() {
 }
 
 void send_sensor_data() {
-  uint8_t actuator = 1;     // e.g., 0=open, 1=closed (2 bits)
-  uint16_t out_temp = 512;  // Raw sensor reading (10 bits)
-  uint16_t in_temp = 600;   // Raw sensor reading (10 bits)
-  uint16_t humidity = 400;  // Raw sensor reading (10 bits)
+
+  if (millis() - tempTimer > 5000) {
+    Indoor_Temp.measure(&indoorTempature, &indoorHumidity);
+    Outdoor_Temp.measure(&outdoorTempature, &outdoorHumidity);
+  }
+  uint8_t actuator = (uint8_t)windowMoving;     // e.g., 0=open, 1=closed (2 bits)
+  uint16_t out_temp = (uint16_t)outdoorTempature;  // Raw sensor reading (10 bits)
+  uint16_t in_temp = (uint16_t)indoorTempature;   // Raw sensor reading (10 bits)
+  uint16_t humidity = (uint16_t)(outdoorHumidity);  // Raw sensor reading (10 bits)
 
   uint32_t payload = ((uint32_t)actuator << 30) | 
                      ((uint32_t)out_temp << 20) | 
@@ -129,6 +170,25 @@ void listen_for_commands() {
       
       if (msg_type == 0x01) { 
         Serial.printf("Received new target state from server: 0x%02x\n", target_state);
+        prevState = currState;
+        currState = target_state;
+        if (currState < prevState && windowMoving == 0) {
+          windowMoving = 1;
+          if (windowState) {
+            digitalWrite(windowDir1Pin, HIGH);
+          }
+          if (!windowState) {
+            digitalWrite(windowDir2Pin, HIGH);
+          }
+          openingTime = millis();
+        }
+
+        if (millis() - openingTime > 30000 && windowMoving == 1) {
+          digitalWrite(windowDir1Pin, LOW);
+          digitalWrite(windowDir2Pin, LOW);
+          windowMoving = 0;
+          windowState = !windowState;
+        }
       }
     }
   }
